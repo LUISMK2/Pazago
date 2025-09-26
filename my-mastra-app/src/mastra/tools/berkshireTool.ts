@@ -1,13 +1,14 @@
-import { Client } from "pg";
+import pg from 'pg';
 import OpenAI from "openai";
-import { Tool } from "@mastra/core";
+import { createTool } from "@mastra/core/tools"; // Correct import
 import { z } from "zod";
 
+const { Client } = pg;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 async function vectorSearch(query: string, topK = 3) {
-  const pg = new Client({ connectionString: process.env.DATABASE_URL });
-  await pg.connect();
+  const pgClient = new Client({ connectionString: process.env.DATABASE_URL });
+  await pgClient.connect();
 
   const embResp = await openai.embeddings.create({
     model: "text-embedding-3-small",
@@ -15,7 +16,7 @@ async function vectorSearch(query: string, topK = 3) {
   });
   const embedding = embResp.data[0].embedding;
 
-  const result = await pg.query(
+  const result = await pgClient.query(
     `SELECT source, text, 1 - (embedding <=> $1::vector) AS similarity
      FROM documents
      ORDER BY embedding <=> $1::vector
@@ -23,21 +24,23 @@ async function vectorSearch(query: string, topK = 3) {
     [`[${embedding.join(",")}]`, topK]
   );
 
-  await pg.end();
+  await pgClient.end();
   return result.rows;
 }
 
-export const berkshireTool: Tool = {
+// Use the createTool factory function
+export const berkshireTool = createTool({
   id: "berkshire-search",
   description: "Retrieve relevant passages from Buffett's letters.",
   
-  // 1. Define the tool's expected input using the 'input' property
-  input: z.object({
+  // Define the schema using inputSchema
+  inputSchema: z.object({
     query: z.string().describe("The user query to search the letters"),
   }),
 
-  // 2. The 'execute' function receives the parsed input directly
-  execute: async ({ query }) => {
+  // Access the arguments from the 'context' object
+  execute: async ({ context }) => {
+    const { query } = context; 
     const results = await vectorSearch(query, 3);
     
     return results.map((r: any) => ({
@@ -45,4 +48,4 @@ export const berkshireTool: Tool = {
       text: r.text.slice(0, 500) + "...",
     }));
   },
-};
+});
